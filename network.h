@@ -46,6 +46,6 @@ private:
   bool _doScan;
 };
 
-extern Network network;
+extern class Network network;
 
 #endif

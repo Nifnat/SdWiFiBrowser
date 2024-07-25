@@ -237,4 +237,4 @@ void Network::loop() {
   }
 }
 
-Network network;
+class Network network;
