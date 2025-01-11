@@ -28,7 +28,7 @@
 
 #define MYSERIAL0 Serial
 
-#define RELEASE  // Comment to enable debug output
+//#define RELEASE  // Comment to enable debug output
 #ifndef RELEASE
 #define DEBUG_LOG(...) Serial.printf(__VA_ARGS__)
 #else

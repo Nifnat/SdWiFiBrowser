@@ -35,10 +35,25 @@ void FSWebServer::begin(FS* fs) {
   		this->onHttpDownload(request);
   	});
 
-  	server.on("/upload", HTTP_POST, [](AsyncWebServerRequest *request) { 
-  	  request->send(200, "text/plain", ""); },[this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-		  this->onHttpFileUpload(request, filename, index, data, len, final);
-	  });
+    server.on("/upload", HTTP_POST, [this](AsyncWebServerRequest *request) {
+            DEBUG_LOG("upload pre 200");
+            request->send(200, "text/plain", "Upload started");
+        },
+        [this](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            DEBUG_LOG("upload pre onHttpFileUpload");
+            
+            if (!index) {
+                if (request->hasArg("path")) {
+                    String path = request->arg("path");
+                    DEBUG_LOG("Found path parameter from URL: %s", path.c_str());
+                } else {
+                    DEBUG_LOG("No path parameter found in URL");
+                }
+            }
+            
+            this->onHttpFileUpload(request, filename, index, data, len, final);
+        }
+    );
 
     server.on("/wifiap", HTTP_POST, [this](AsyncWebServerRequest *request) {
   		this->onHttpWifiAP(request);
@@ -259,7 +274,7 @@ void FSWebServer::onHttpDownload(AsyncWebServerRequest *request) {
       request->send(500, "text/plain","DOWNLOAD:BADARGS");
       return;
     }
-    AsyncWebParameter* p = request->getParam(0);
+    const AsyncWebParameter* p = request->getParam(static_cast<size_t>(0));
     String path = p->value();
 
     AsyncWebServerResponse *response = request->beginResponse(200);
@@ -267,72 +282,67 @@ void FSWebServer::onHttpDownload(AsyncWebServerRequest *request) {
     response->addHeader("Access-Control-Allow-Origin", "*");
     if (!this->handleFileReadSD(path, request))
       request->send(404, "text/plain", "DOWNLOAD:FileNotFound");
-    delete response; // Free up memory!
+    delete response;
 }
 
 void FSWebServer::onHttpList(AsyncWebServerRequest * request) {
-
-  switch(sdcontrol.canWeTakeControl())
-  { 
-    case -1: {
-      DEBUG_LOG("Printer controlling the SD card\n"); 
-      request->send(500, "text/plain","LIST:SDBUSY");
+    switch(sdcontrol.canWeTakeControl()) { 
+        case -1:
+            DEBUG_LOG("Printer controlling the SD card\n"); 
+            request->send(500, "text/plain", "LIST:SDBUSY");
+            return;
+        default: break;
     }
-    return;
-  
-    default: break;
-  }
 
-  int params = request->params();
-  if (params == 0) {
-    request->send(500, "text/plain","LIST:BADARGS");
-    return;
-  }
-  AsyncWebParameter* p = request->getParam(0);
-  String path = p->value();
+    if (request->params() == 0) {
+        request->send(500, "text/plain", "LIST:BADARGS");
+        return;
+    }
 
-  if (path != "/" && !SD.exists((char *)path.c_str())) {
-    request->send(500, "text/plain","LIST:BADPATH");
-    return;
-  }
+    const AsyncWebParameter* p = request->getParam(static_cast<size_t>(0));
+    String path = p->value();
 
-  sdcontrol.takeControl();
-  File dir = SD.open((char *)path.c_str());
-  path = String();
-  if (!dir.isDirectory()) {
+    sdcontrol.takeControl();
+
+    if (!SD.exists((char *)path.c_str())) {
+        request->send(500, "text/plain", "LIST:BADPATH");
+        sdcontrol.relinquishControl();
+        return;
+    }
+
+    File dir = SD.open((char *)path.c_str());
+    if (!dir.isDirectory()) {
+        dir.close();
+        request->send(500, "text/plain", "LIST:NOTDIR");
+        sdcontrol.relinquishControl();
+        return;
+    }
+
+    dir.rewindDirectory();
+    String output = "[";
+    for (int cnt = 0; true; ++cnt) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        if (cnt > 0) {
+            output += ',';
+        }
+        output += "{\"type\":\"";
+        output += (entry.isDirectory()) ? "dir" : "file";
+        output += "\",\"name\":\"";
+        output += entry.name();
+        output += "\",\"size\":\"";
+        output += String(entry.size());
+        output += "\"}";
+        entry.close();
+    }
+    output += "]";
+    
+    request->send(200, "application/json", output);
+    
     dir.close();
-    request->send(500, "text/plain", "LIST:NOTDIR");
-    return;
-  }
-  dir.rewindDirectory();
-  
-
-  String output = "[";
-  for (int cnt = 0; true; ++cnt) {
-    File entry = dir.openNextFile();
-    if (!entry) {
-      break;
-    }
-    if (cnt > 0) {
-      output += ',';
-    }
-    output += "{\"type\":\"";
-    output += (entry.isDirectory()) ? "dir" : "file";
-    output += "\",\"name\":\"";
-    output += entry.name();
-    output += "\"";
-    output += ",\"size\":\"";
-    output += String(entry.size());
-    output += "\"";
-    output += "}";
-    entry.close();
-  }
-  output += "]";
-  request->send(200, "text/json", output);
-  dir.close();
-  sdcontrol.relinquishControl();
-
-  return;
+    sdcontrol.relinquishControl();
 }
 
 void FSWebServer::onHttpDelete(AsyncWebServerRequest *request) {
@@ -353,7 +363,7 @@ void FSWebServer::onHttpDelete(AsyncWebServerRequest *request) {
     Serial.println("no path arg");
   } 
   else {
-    AsyncWebParameter* p = request->getParam(0);
+    const AsyncWebParameter* p = request->getParam(static_cast<size_t>(0));
     String path = "/"+p->value();
     Serial.print("path:");
     Serial.println(path);
@@ -372,59 +382,110 @@ void FSWebServer::onHttpDelete(AsyncWebServerRequest *request) {
   }
 }
 
-void FSWebServer::onHttpFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final){
-  static File uploadFile;
+void FSWebServer::onHttpFileUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    static File uploadFile;
+    static String uploadPath;
+    static bool pathInitialized = false;
 
-  if (request->url() != "/upload") {
-    DEBUG_LOG("Upload bad args"); 
-    request->send(500, "text/plain","UPLOAD:BADARGS");
-    return;
-  }
-
-  switch(sdcontrol.canWeTakeControl())
-  { 
-    case -1: {
-      DEBUG_LOG("Printer controlling the SD card\n"); 
-      request->send(500, "text/plain","UPLOAD:SDBUSY");
-    }
-    return;
-
-    default: break;
-  }
-
-  if (!index) { // start
-    sdcontrol.takeControl();
-    if(uploadFile){
-        uploadFile.close();
+    if (request->url() != "/upload") {
+        DEBUG_LOG("Upload bad args"); 
+        request->send(500, "text/plain", "UPLOAD:BADARGS");
+        return;
     }
 
-    if (SD.exists((char *)filename.c_str())) {
-      SD.remove((char *)filename.c_str());
+    if (!index) {
+        sdcontrol.takeControl();
+        if (uploadFile) {
+            uploadFile.close();
+        }
+
+        pathInitialized = false;
+
+        int params = request->params();
+        for(int i = 0; i < params; i++) {
+            const AsyncWebParameter* param = request->getParam(i);
+            if(param->isPost() && param->name() == "path") {
+                uploadPath = param->value();
+                pathInitialized = true;
+                DEBUG_LOG("Found path in multipart form data: %s\n", uploadPath.c_str());
+                break;
+            }
+        }
+
+        if (!pathInitialized) {
+            if (request->hasArg("path")) {
+                uploadPath = request->arg("path");
+                pathInitialized = true;
+                DEBUG_LOG("Found path in form field: %s\n", uploadPath.c_str());
+            } else {
+                uploadPath = "/";
+                DEBUG_LOG("No path specified, using root directory\n");
+            }
+        }
+
+        if (uploadPath.length() > 0) {
+            if (!uploadPath.startsWith("/")) {
+                uploadPath = "/" + uploadPath;
+            }
+            if (!uploadPath.endsWith("/")) {
+                uploadPath += "/";
+            }
+        }
+
+        DEBUG_LOG("Using upload path: %s\n", uploadPath.c_str());
+
+        if (uploadPath != "/") {
+            String dirPath = uploadPath;
+            if (dirPath.endsWith("/")) {
+                dirPath = dirPath.substring(0, dirPath.length() - 1);
+            }
+            
+            DEBUG_LOG("Attempting to create directory: %s\n", dirPath.c_str());
+            if (!SD.exists(dirPath.c_str())) {
+                if (!SD.mkdir(dirPath.c_str())) {
+                    DEBUG_LOG("Failed to create directory: %s\n", dirPath.c_str());
+                    request->send(500, "text/plain", "UPLOAD:MKDIRFAILED");
+                    sdcontrol.relinquishControl();
+                    return;
+                }
+                DEBUG_LOG("Directory created successfully\n");
+            } else {
+                DEBUG_LOG("Directory already exists\n");
+            }
+        }
+
+        String fullPath = uploadPath + filename;
+        DEBUG_LOG("Final upload path: %s\n", fullPath.c_str());
+
+        if (SD.exists((char *)fullPath.c_str())) {
+            DEBUG_LOG("Removing existing file\n");
+            SD.remove((char *)fullPath.c_str());
+        }
+
+        uploadFile = SD.open(fullPath.c_str(), FILE_WRITE);
+        if (!uploadFile) {
+            request->send(500, "text/plain", "UPLOAD:OPENFAILED");
+            sdcontrol.relinquishControl();
+            DEBUG_LOG("Upload: Open file failed: %s\n", fullPath.c_str());
+        } else {
+            DEBUG_LOG("Upload: File opened successfully: %s\n", fullPath.c_str());
+        }
     }
 
-    uploadFile = SD.open(filename.c_str(), FILE_WRITE);
-    if(!uploadFile) {
-      request->send(500, "text/plain", "UPLOAD:OPENFAILED");
-      sdcontrol.relinquishControl();
-      DEBUG_LOG("Upload: Open file failed: %s \n",filename.c_str());
-    } else {
-      DEBUG_LOG("Upload: First upload part: %s \n",filename.c_str());
+    if (len) {
+        if (uploadFile) {
+            if (len != uploadFile.write(data, len)) {
+                DEBUG_LOG("Upload: write error\n");  
+            }
+            DEBUG_LOG("Upload: written: %d bytes\n", len);
+        }
     }
-  } 
 
-  if (len) { // Continue
-    if(len != uploadFile.write(data, len)){
-      DEBUG_LOG("Upload: write error\n");  
+    if (final) {
+        if (uploadFile) {
+            uploadFile.close();
+        }
+        DEBUG_LOG("Upload End\n");
+        sdcontrol.relinquishControl();
     }
-    DEBUG_LOG("Upload: written: %d bytes\n",len);
-  }
-
-  if (final) {  // End
-    if (uploadFile) {
-      uploadFile.close();
-    }
-    DEBUG_LOG("Upload End\n");
-    sdcontrol.relinquishControl();
-  }
 }
-

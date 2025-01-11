@@ -30,7 +30,7 @@ String IpAddress2String(const IPAddress& ipAddress)
   return String(ipAddress[0]) + String(".") +\
   String(ipAddress[1]) + String(".") +\
   String(ipAddress[2]) + String(".") +\
-  String(ipAddress[3])  ;
+  String(ipAddress[3]);
 }
 
 int Network::startConnect(String ssid, String psd) {
@@ -78,8 +78,6 @@ int Network::connect(String ssid, String psd) {
   }
 
   config.save(ssid.c_str(), psd.c_str());
-  //String sIp = IpAddress2String(WiFi.localIP());
-  //config.save_ip(sIp.c_str());
 
   Serial.println("");
   Serial.print("Connected to "); Serial.println(config.ssid());
@@ -125,8 +123,6 @@ int Network::start() {
   }
 
   config.save();
-  //String sIp = IpAddress2String(WiFi.localIP());
-  //config.save_ip(sIp.c_str());
 
   SERIAL_ECHOLN("");
   SERIAL_ECHO("Connected to "); SERIAL_ECHOLN(config.ssid());
@@ -164,31 +160,19 @@ bool Network::isSTAmode() {
 void Network::startSoftAP() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAPConfig(AP_local_ip, AP_gateway, AP_subnet);
-  if (WiFi.softAP(AP_SSID))
-  {                           
+  if (WiFi.softAP(AP_SSID)) {                           
     _stamode = false;
     Serial.println("SD-WIFI-PRO SoftAP started.");
     Serial.print("IP address = ");
     Serial.println(WiFi.softAPIP());
     Serial.println(String("MAC address = ")  + WiFi.softAPmacAddress().c_str());
     config.clear();
-  } 
-  else
-  { 
+  } else { 
     Serial.println("WiFiAP Failed");
     delay(1000);
     Serial.println("restart now...");
     ESP.restart();
   }
-
-  // 	m_apmode = true;
-	// WiFi.mode(WIFI_AP_STA);
-  //   WiFi.persistent(false);
-	// WiFi.softAP(ssid, psk);
-	// /* Setup the DNS server redirecting all the domains to the AP_local_ip */
-	// m_dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
-	// m_dnsServer.start(53, "*", WiFi.softAPIP());
-  //   return WiFi.softAPIP();
 }
 
 void Network::getWiFiList(String &list) {
